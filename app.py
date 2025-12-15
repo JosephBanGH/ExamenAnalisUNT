@@ -6,7 +6,7 @@ import io
 
 class ExamEvaluator:
     def __init__(self):
-        self.n8n_webhook_url = "http://localhost:5678/webhook-test/exam-auto-grader"
+        self.n8n_webhook_url = "http://localhost:5678/webhook/exam-auto-grader"
         self.results = None
         self.statistics = None
     
