@@ -1,0 +1,263 @@
+{
+  "name": "Exam Auto Grader (Google Vision, Streamlit Sync)",
+  "nodes": [
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "[{\"success\": true, \"student_id\": \"mobile_user\", \"exam_id\": \"EXAM001\", \"total_questions\": 0, \"correct_count\": 0, \"incorrect_count\": 0, \"percent_correct\": 0, \"answers\": []}]",
+        "options": {}
+      },
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1632,
+        32
+      ],
+      "id": "7771aee3-4a77-4ee9-b82e-0ccc8699b595",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.ocr.space/parse/image",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "base64Image",
+              "value": "={{ 'data:image/png;base64,' + $json.body.exam_image }}"
+            },
+            {
+              "name": "apikey",
+              "value": "K81939223188957"
+            },
+            {
+              "name": "filetype",
+              "value": "png"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "name": "OCR with Binary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 3,
+      "position": [
+        624,
+        0
+      ],
+      "id": "9239769e-6091-473e-b3a7-9da35445a479"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "exam-auto-grader",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "name": "Webhook1",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        336,
+        0
+      ],
+      "id": "993a447a-9930-4c6b-8e9b-f0b93fd951e0",
+      "webhookId": "6051ef14-b9dc-49ec-a556-0af1c3c84453"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Node: ParseOCR Mejorado\nconst ocrResponse = $input.first().json.body\n\n// Verificar errores de OCR\nif (ocrResponse.IsErroredOnProcessing) {\n  throw new Error(`OCR Error: ${ocrResponse.ErrorMessage?.[0] || 'Unknown error'}`);\n}\n\nconst parsedText = ocrResponse.ParsedResults?.[0]?.ParsedText || '';\nconsole.log('=== TEXTO OCR COMPLETO ===');\nconsole.log(parsedText);\n\nif (!parsedText) {\n  throw new Error('No se extrajo texto de la imagen');\n}\n\n// Función para limpiar y normalizar letras de opciones\nfunction normalizeOption(char) {\n  const map = {\n    'Y': 'B',  // Y se confunde con b)\n    'y': 'B',\n    'X': 'A',  // A veces X es a)\n    'C': 'C',\n    'D': 'D',\n    'Ä': 'D',  // ä se confunde con d)\n    'ä': 'D',\n    '\"': 'B',  // \" se confunde con b)\n    'E': 'E'\n  };\n  \n  const upper = char.toUpperCase();\n  return map[upper] || upper;\n}\n\n// Dividir en líneas\nconst lines = parsedText.split(/\\r?\\n/).map(l => l.trim()).filter(l => l.length > 0);\n\n// Detectar respuestas marcadas\nconst markedAnswers = [];\nlet currentQuestion = null;\n\nfor (let i = 0; i < lines.length; i++) {\n  const line = lines[i];\n  \n  // Detectar número de pregunta (1. o 1) al inicio de línea)\n  const questionMatch = line.match(/^(\\d+)[.)]\\s/);\n  if (questionMatch) {\n    currentQuestion = parseInt(questionMatch[1]);\n    console.log(`Pregunta detectada: ${currentQuestion}`);\n  }\n  \n  // Buscar opciones marcadas en esta línea\n  // Patrones: a) b) c) d) Y) X) \") ä) etc.\n  const optionPatterns = [\n    /^([a-dA-DxyYäÄ\"'])[\\)]/,           // a) b) Y) X) \") ä)\n    /^([a-dA-DxyYäÄ\"'])\\s*[\\)]/,       // a ) con espacio\n    /\\[([xX✓✔☑])\\]\\s*([a-dA-D])/,     // [X] A o [✓] B\n    /([a-dA-D])\\s*\\[([xX✓✔☑])\\]/,     // A [X] o B [✓]\n  ];\n  \n  for (const pattern of optionPatterns) {\n    const match = line.match(pattern);\n    if (match && currentQuestion) {\n      let detectedOption = null;\n      \n      // Dependiendo del patrón, extraer la opción\n      if (pattern.source.includes('\\\\[')) {\n        // Patrones con checkbox [X]\n        detectedOption = match[2] || match[1];\n      } else {\n        // Patrones con a) b) etc\n        detectedOption = match[1];\n      }\n      \n      // Normalizar la opción detectada\n      const normalizedOption = normalizeOption(detectedOption);\n      \n      // Verificar si esta opción ya fue agregada para esta pregunta\n      const alreadyAdded = markedAnswers.some(\n        a => a.q === currentQuestion && a.value === normalizedOption\n      );\n      \n      if (!alreadyAdded && ['A', 'B', 'C', 'D'].includes(normalizedOption)) {\n        console.log(`  → Opción marcada: ${detectedOption} → Normalizada: ${normalizedOption}`);\n        markedAnswers.push({\n          q: currentQuestion,\n          value: normalizedOption,\n          raw_detected: detectedOption\n        });\n        break; // Solo una respuesta por línea\n      }\n    }\n  }\n}\n\n// Si no se detectó ninguna respuesta, intentar método alternativo\nif (markedAnswers.length === 0) {\n  console.log('⚠️ No se detectaron respuestas con el método principal');\n  console.log('Intentando detección alternativa...');\n  \n  // Método alternativo: buscar letras \"destacadas\" (en mayúscula sola)\n  let currentQ = null;\n  for (const line of lines) {\n    const qMatch = line.match(/^(\\d+)[.)]/);\n    if (qMatch) currentQ = parseInt(qMatch[1]);\n    \n    // Buscar letra sola en mayúscula entre las opciones\n    const options = line.match(/\\b([A-D])\\b/g);\n    if (options && options.length === 1 && currentQ) {\n      markedAnswers.push({ q: currentQ, value: options[0] });\n      console.log(`  → Método alternativo: Q${currentQ} = ${options[0]}`);\n    }\n  }\n}\n\nconsole.log('=== RESPUESTAS DETECTADAS ===');\nconsole.log(JSON.stringify(markedAnswers, null, 2));\n\n// Obtener datos del webhook original\nconst webhookData = $('Webhook1').item.json.body;\nlet answerKey = {};\ntry {\n  answerKey = JSON.parse(webhookData.answer_key || '{}');\n} catch (e) {\n  console.error('Error parsing answer_key:', e);\n  answerKey = {};\n}\n\nreturn [{\n  json: {\n    student_id: webhookData.student_id,\n    exam_id: webhookData.exam_id,\n    answers: markedAnswers,\n    answer_key: answerKey,\n    raw_ocr_text: parsedText,\n    detected_questions: [...new Set(markedAnswers.map(a => a.q))].length\n  }\n}];"
+      },
+      "name": "ParseOCR1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        816,
+        0
+      ],
+      "id": "bf33659a-4fbd-493b-8c40-40c4caaa024c"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ScoreCalculator node\nconst input = items[0].json;\nconst answers = input.answers || [];\nconst key = input.answer_key || {};\n\nlet correct = 0;\nlet incorrect = 0;\nconst detail = [];\n\nfor (let i = 0; i < answers.length; i++) {\n  const a = answers[i];\n  const q = String(a.q);\n  const studentValue = (a.value || '').trim().toUpperCase();\n  const correctValue = (key[q] || '').trim().toUpperCase();\n  const isCorrect = studentValue !== '' && studentValue === correctValue;\n  if (isCorrect) correct += 1;\n  else incorrect += 1;\n  detail.push({ question: Number(q), studentValue, correctValue, isCorrect });\n}\n\nconst total = answers.length;\nconst percent = total === 0 ? 0 : (correct / total) * 100;\n\nreturn [{\n  json: {\n    student_id: input.student_id,\n    exam_id: input.exam_id,\n    total_questions: total,\n    correct_count: correct,\n    incorrect_count: incorrect,\n    percent_correct: Number(percent.toFixed(2)),\n    answers: detail\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1008,
+        -144
+      ],
+      "id": "51cc57d9-e66d-4f3d-94cb-109c6ee85f79",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "table": {
+          "__rl": true,
+          "value": "exam_results",
+          "mode": "list",
+          "cachedResultName": "exam_results"
+        },
+        "dataMode": "defineBelow",
+        "valuesToSend": {
+          "values": [
+            {
+              "column": "timestamp",
+              "value": "={{ $now }}"
+            },
+            {
+              "column": "student_id",
+              "value": "={{ $json.student_id }}"
+            },
+            {
+              "column": "exam_id",
+              "value": "={{ $json.exam_id }}"
+            },
+            {
+              "column": "correct_count",
+              "value": "={{ $json.correct_count }}"
+            },
+            {
+              "column": "incorrect_count",
+              "value": "={{ $json.incorrect_count }}"
+            },
+            {
+              "column": "percent_correct",
+              "value": "={{ $json.percent_correct }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.mySql",
+      "typeVersion": 2.5,
+      "position": [
+        1248,
+        -144
+      ],
+      "id": "f147b3a9-c982-4617-a122-1c02159eb946",
+      "name": "Insert rows in a table",
+      "credentials": {
+        "mySql": {
+          "id": "Zl7oA4ZpAIpZZSzd",
+          "name": "MySQL account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "numberInputs": 3,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1440,
+        144
+      ],
+      "id": "30d380b7-a472-4fc6-964c-c69d0fbe056b",
+      "name": "Merge"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "OCR with Binary": {
+      "main": [
+        [
+          {
+            "node": "ParseOCR1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook1": {
+      "main": [
+        [
+          {
+            "node": "OCR with Binary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ParseOCR1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 2
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Insert rows in a table",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Insert rows in a table": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "b3f79087-4fb8-4c0d-8e1c-ba0b6228cf8c",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "50841e3223aaf622257f91df227280036edff9ed7ca23925aad2ff99d8c5dbf4"
+  },
+  "id": "jbGJNpizngq7IEsx",
+  "tags": []
+}

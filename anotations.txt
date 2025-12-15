@@ -1,0 +1,196 @@
+MOve Data tiene exam_image como key
+
+Codigo de ScoreCalculator
+
+        // ScoreCalculator node
+        // Compare detected answers with answer key and compute results
+
+        const input = items[0].json;
+        const answers = input.answers || [];
+        const key = input.answer_key || {};
+
+        let correct = 0;
+        let incorrect = 0;
+        const detail = [];
+
+        for (let i = 0; i < answers.length; i++) {
+        const a = answers[i];
+        const q = String(a.q);
+        const studentValue = (a.value || '').trim().toUpperCase();
+        const correctValue = (key[q] || '').trim().toUpperCase();
+        const isCorrect = studentValue !== '' && studentValue === correctValue;
+        if (isCorrect) correct += 1;
+        else incorrect += 1;
+        detail.push({ question: Number(q), studentValue, correctValue, isCorrect });
+        }
+
+        const total = answers.length;
+        const percent = total === 0 ? 0 : (correct / total) * 100;
+
+        return [{
+        json: {
+            student_id: input.student_id,
+            exam_id: input.exam_id,
+            total_questions: total,
+            correct_count: correct,
+            incorrect_count: incorrect,
+            percent_correct: Number(percent.toFixed(2)),
+            answers: detail
+        }
+        }];
+
+        {
+                    'requests': [{
+                        'image': { 'content': '={{ $binary.data.data }}'},
+                        'features': [{'type': 'TEXT_DETECTION'}]
+                    }]
+                }
+
+
+--------------------------
+//ocrResponse
+={
+  "apikey": "My APIKey",
+  "base64Image": "data:image/png;base64={{ $binary.data.data }}",
+  "language": "spa"
+}
+
+
+
+-------------------------------------------------
+// ParseOCR node
+const ocrResponse = items[0].json.responses[0];
+const annotations = ocrResponse.textAnnotations || [];
+const textBlocks = annotations.map(a => a.description);
+
+const markedAnswers = [];
+let qNumber = 1;
+
+for (let i = 0; i < textBlocks.length; i++) {
+  const txt = textBlocks[i].trim().toUpperCase();
+  if (txt === 'X' || txt === '\u2713') {
+    markedAnswers.push({ q: qNumber, value: 'A' }); // placeholder
+    qNumber++;
+  }
+}
+
+const inputData = $json;
+let answerKey = {};
+try {
+  answerKey = JSON.parse(inputData.answer_key || '{}');
+} catch (e) {
+  answerKey = {};
+}
+
+return [{
+  json: {
+    student_id: inputData.student_id,
+    exam_id: inputData.exam_id,
+    answers: markedAnswers,
+    answer_key: answerKey
+  }
+}];
+---------------------------
+// ScoreCalculator node
+const input = items[0].json;
+const answers = input.answers || [];
+const key = input.answer_key || {};
+
+let correct = 0;
+let incorrect = 0;
+const detail = [];
+
+for (let i = 0; i < answers.length; i++) {
+  const a = answers[i];
+  const q = String(a.q);
+  const studentValue = (a.value || '').trim().toUpperCase();
+  const correctValue = (key[q] || '').trim().toUpperCase();
+  const isCorrect = studentValue !== '' && studentValue === correctValue;
+  if (isCorrect) correct += 1;
+  else incorrect += 1;
+  detail.push({ question: Number(q), studentValue, correctValue, isCorrect });
+}
+
+const total = answers.length;
+const percent = total === 0 ? 0 : (correct / total) * 100;
+
+return [{
+  json: {
+    student_id: input.student_id,
+    exam_id: input.exam_id,
+    total_questions: total,
+    correct_count: correct,
+    incorrect_count: incorrect,
+    percent_correct: Number(percent.toFixed(2)),
+    answers: detail
+  }
+}];
+
+      
+----------------
+-
+--------------------
+PROMT DE GEMINI 2.0
+
+Eres un experto en análisis de exámenes escaneados mediante OCR. Tu tarea es detectar qué respuestas marcó el estudiante.
+
+## CONTEXTO
+El estudiante marca sus respuestas en el examen físico, pero el OCR puede tener errores de lectura. Las marcas comunes son:
+- Respuestas sin prefijo de letra (solo el texto)
+- Símbolos extraños como '&', 'YL', caracteres especiales
+- Falta de 'a)', 'b)', 'c)', 'd)' antes de la respuesta marcada
+- Texto que aparece directamente sin identificador
+
+## TEXTO OCR DEL EXAMEN
+------------------------
+{{$json.text}}
+------------------------
+
+## REGLAS DE DETECCIÓN
+1. Una respuesta está MARCADA si:
+   - Aparece SIN el prefijo 'a)', 'b)', 'c)' o 'd)' mientras las demás opciones SÍ lo tienen
+   - Tiene un símbolo extraño antes (como '&', 'YL', '_', etc.)
+   - Es la única opción sin prefijo de letra en esa pregunta
+   - Las otras opciones de la misma pregunta SÍ tienen sus prefijos claramente
+
+2. Examina cada pregunta:
+   - Si 3 opciones tienen 'a)', 'b)', 'c)' y una NO → la que NO tiene prefijo es la marcada
+   - Si una opción tiene símbolo raro → es la marcada
+   - Si todas tienen prefijo → puede que no haya marca o el OCR leyó bien todo
+
+3. Para "value": asigna la letra A, B, C o D según la posición de la opción marcada
+
+4. Para "raw_detected": guarda el símbolo o carácter extraño encontrado, o "sin_prefijo" si simplemente falta el prefijo, o "" si no hay marca clara
+
+## DATOS DEL EXAMEN
+- student_id: {{$json.student_id}}
+- exam_id: {{$json.exam_id}}
+- answer_key: {{$json.answer_key}}
+
+## FORMATO DE RESPUESTA
+Devuelve SOLO un JSON válido, sin bloques de código, sin comentarios, sin explicaciones:
+
+[
+  {
+    "student_id": "{{$json.student_id}}",
+    "exam_id": "{{$json.exam_id}}",
+    "answers": [
+      {
+        "q": 1,
+        "value": "B",
+        "raw_detected": "sin_prefijo"
+      }
+    ],
+    "answer_key": {{$json.answer_key}},
+    "raw_ocr_text": "{{$json.text}}",
+    "detected_questions": 10
+  }
+]
+
+## IMPORTANTE
+- NO incluyas ```json ni ``` en tu respuesta
+- Solo el JSON puro
+- Analiza CUIDADOSAMENTE cada pregunta buscando la opción sin prefijo o con símbolo extraño"
+
+----------------------------------------------
+PROMT GEMINI 3.0.1
