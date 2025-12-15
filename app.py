@@ -118,6 +118,9 @@ def main():
     st.set_page_config(page_title="Exam Grader", page_icon="📝", layout="wide")
     
     st.title("📝 Automatic Exam Grader")
+
+    st.info("No mandes informacion personal sensible")
+
     st.markdown("Sube una foto de tu examen y obtén tu calificación al instante")
     
     # Inicializar evaluador
@@ -129,7 +132,6 @@ def main():
     # Sidebar para configuración
     with st.sidebar:
         st.header("⚙️ Configuración")
-        st.info("No mandes informacion personal sensible")
         exam_id = st.text_input("ID del Examen", "EXAM001")
         
         student_id = st.text_input("ID de estudiante","mobile01")
