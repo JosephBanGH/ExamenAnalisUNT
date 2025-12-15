@@ -129,6 +129,7 @@ def main():
     # Sidebar para configuración
     with st.sidebar:
         st.header("⚙️ Configuración")
+        st.info("No mandes informacion personal sensible")
         exam_id = st.text_input("ID del Examen", "EXAM001")
         
         student_id = st.text_input("ID de estudiante","mobile01")
